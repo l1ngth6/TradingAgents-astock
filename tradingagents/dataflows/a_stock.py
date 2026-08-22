@@ -25,9 +25,11 @@ import math
 import random
 import re as _re
 import socket
+import threading
 import time
 import uuid
 import urllib.request
+from pathlib import Path
 
 import pandas as pd
 import requests as _requests
@@ -243,6 +245,12 @@ def _snapshot_notice(curr_date: str, what: str) -> str:
 
 _mootdx_client = None
 
+# mootdx 0.11.x 在配置文件缺失/损坏时会自行运行一次全量 bestip 扫描。这个扫描既慢，
+# 在 TCP 7709 被拦的网络里还会输出“请手动运行 python -m mootdx bestip”，但项目下方
+# 已经有覆盖完整服务器表且带真实取数验证的选服逻辑，不应再跑一遍。配置读写也可能由
+# 多个 Web session 同时触发，因此用进程内锁保护原子更新。
+_MOOTDX_CONFIG_LOCK = threading.RLock()
+
 # 实测可用的通达信备选服务器（按延迟排序，2026-06 验证）。用于规避 mootdx
 # 0.11.x 全新安装时 BESTIP.HQ 为空串导致的 `ValueError: not enough values to unpack`。
 _TDX_SERVERS = [
@@ -261,6 +269,100 @@ _TDX_CANARY_SYMBOL = "600519"
 # 放大成"每个请求卡几十秒"。
 _MOOTDX_RETRY_AFTER_S = 300.0
 _mootdx_unavailable_until = 0.0
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """原子写 JSON，避免进程被中断后留下半截 mootdx 配置。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            _json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _prepare_mootdx_config() -> Path:
+    """确保 mootdx 有可直接读取的配置，不触发它内置的 ``bestip`` 扫描。
+
+    mootdx 的默认 ``BESTIP.HQ`` 是空字符串；配置缺失时 ``config.setup()`` 又会先
+    跑一次全表测速。这里仅补一个格式合法的候选地址，真正采用哪台服务器仍由
+    ``_get_mootdx_client()`` 的 TCP 预筛 + 真实 K 线验证决定。已有有效配置会保留。
+    损坏的配置先备份，再自动修复，避免要求用户进入容器处理。
+    """
+    from mootdx import config as mootdx_config
+
+    config_path = Path(
+        getattr(mootdx_config, "CONF", Path.home() / ".mootdx" / "config.json")
+    )
+    with _MOOTDX_CONFIG_LOCK:
+        payload: dict = {}
+        changed = not config_path.exists()
+        if config_path.exists():
+            try:
+                loaded = _json.loads(config_path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError("配置顶层不是 JSON object")
+                payload = loaded
+            except (OSError, ValueError, _json.JSONDecodeError) as exc:
+                backup = config_path.with_name(
+                    f"{config_path.name}.invalid-{uuid.uuid4().hex[:8]}"
+                )
+                try:
+                    config_path.replace(backup)
+                    logger.warning("损坏的 mootdx 配置已备份到 %s：%s", backup, exc)
+                except OSError:
+                    logger.warning("mootdx 配置损坏且无法备份，将尝试原地修复：%s", exc)
+                payload = {}
+                changed = True
+
+        bestip = payload.get("BESTIP")
+        if not isinstance(bestip, dict):
+            bestip = {}
+            changed = True
+        else:
+            bestip = dict(bestip)
+
+        hq = bestip.get("HQ")
+        valid_hq = (
+            isinstance(hq, (list, tuple))
+            and len(hq) == 2
+            and bool(hq[0])
+        )
+        if not valid_hq:
+            bestip["HQ"] = list(_TDX_SERVERS[0])
+            changed = True
+        for market in ("EX", "GP"):
+            if market not in bestip:
+                bestip[market] = ""
+                changed = True
+        payload["BESTIP"] = bestip
+
+        if changed:
+            _atomic_write_json(config_path, payload)
+            logger.info("已初始化 mootdx 配置（无需运行 bestip）：%s", config_path)
+    return config_path
+
+
+def _persist_mootdx_server(server: tuple[str, int]) -> None:
+    """持久化已经通过真实取数验证的 HQ 服务器，供下一进程直接复用。"""
+    from mootdx import config as mootdx_config
+
+    with _MOOTDX_CONFIG_LOCK:
+        config_path = _prepare_mootdx_config()
+        payload = _json.loads(config_path.read_text(encoding="utf-8"))
+        bestip = payload.get("BESTIP")
+        bestip = dict(bestip) if isinstance(bestip, dict) else {}
+        bestip["HQ"] = [server[0], int(server[1])]
+        bestip.setdefault("EX", "")
+        bestip.setdefault("GP", "")
+        payload["BESTIP"] = bestip
+        _atomic_write_json(config_path, payload)
+        # config.set() 只更新当前进程内的 settings；文件由上面的原子写负责。
+        mootdx_config.set("BESTIP", bestip)
 
 # ⚠️ 曾经加过「连续 N 台协议失败就停手」的提前退出，已移除：三台远端拒绝**证明不了**
 # 本地网络封了协议，而列表里靠后的服务器完全可能是好的。提前收手会让那台可用服务器
@@ -341,12 +443,12 @@ def reset_mootdx_client() -> None:
 
 @contextlib.contextmanager
 def _preserve_mootdx_bestip():
-    """探测期间保护 mootdx 的持久化服务器配置，退出时按需还原。
+    """探测期间保护 mootdx 当前进程内的服务器配置，退出时按需还原。
 
     `StdQuotes.__init__` 里有 `config.set('BESTIP', {'HQ': self.server})`——**每建一次
-    带 server 的 client 都会写进 mootdx 的配置文件**。逐台探测 38 个候选就等于把用户
-    原本配好的服务器一路覆写，最后留下的是最后一台**失败的**服务器，还会连累同一台
-    机器上其它用 mootdx 的程序。
+    带 server 的 client 都会改写模块内的配置**。逐台探测 38 个候选会让随后的裸
+    factory 读到最后一台**失败的**服务器，所以仍需保护并还原。真正的文件持久化由
+    ``_persist_mootdx_server()`` 仅在真实取数验证成功后完成。
 
     🔴 必须先 `setup()` 再快照：新进程里 `config.get("BESTIP")` 返回的是模块默认空值，
     用户持久化的值要等 `BaseQuotes.__init__` 调 `setup()` 才读进来。快照到空值的话，
@@ -362,6 +464,7 @@ def _preserve_mootdx_bestip():
     saved = None
     try:
         from mootdx import config as _cfg
+        _prepare_mootdx_config()
         _cfg.setup()
         saved = _cfg.get("BESTIP")
         if isinstance(saved, dict):
@@ -384,7 +487,7 @@ def _preserve_mootdx_bestip():
 def _get_mootdx_client():
     """Lazy-init 健壮版 mootdx Quotes client（TCP 连接，可复用）。
 
-    选服务器的顺序：内置服务器表（TCP 预筛 + 真实取数验证）→ bestip 测速 →
+    选服务器的顺序：内置服务器表（TCP 预筛 + 真实取数验证）→
     裸 factory（老用户 config 里已有 IP）。每一级都必须真正取到数据才会被采用，
     避免把 client 钉死在一台"端口开着但协议不通"的服务器上（#90）。
     全部失败时抛 RuntimeError，并在 `_MOOTDX_RETRY_AFTER_S` 内直接快速失败，
@@ -406,8 +509,8 @@ def _get_mootdx_client():
     from mootdx.quotes import Quotes
 
     tcp_ok_but_dead = 0
-    # 探测会覆写 mootdx 的持久化配置——包在这里，只有真选出可用服务器时才 keep()，
-    # 其余每条退出路径（含异常）都自动还原。
+    # 探测会覆写 mootdx 当前进程内的配置——包在这里，只有真选出可用服务器时才
+    # keep()，其余每条退出路径（含异常）都自动还原。
     with _preserve_mootdx_bestip() as keep_bestip:
         # TCP 预筛并发跑：38 台里多数是"连都连不上"，串行每台要等满超时（实测整轮
         # 73.7s，首次调用像卡死）。预筛纯粹是等 IO，并发不改变选取语义——下面仍按
@@ -428,6 +531,11 @@ def _get_mootdx_client():
                 if _tdx_client_works(candidate):
                     logger.info("mootdx server selected: %s:%s", ip, port)
                     keep_bestip()   # 这次的覆写正是我们想要的，别还原
+                    try:
+                        _persist_mootdx_server((ip, port))
+                    except Exception as e:
+                        # 选服已经成功，持久化失败不应让本次行情请求跟着失败。
+                        logger.warning("mootdx 服务器已选中但配置持久化失败：%s", e)
                     _mootdx_client = candidate
                     return _mootdx_client
                 tcp_ok_but_dead += 1

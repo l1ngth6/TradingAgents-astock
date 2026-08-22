@@ -125,14 +125,19 @@ deepseek-v4-flash 等模型在 tool call 时可能返回中文股票名而非 6 
 
 ### 探测 mootdx 不能覆写用户配置（v0.5.10，v0.5.12 重构）
 `StdQuotes.__init__` 里有 `config.set('BESTIP', {'HQ': self.server})`——**每建一次带
-`server` 的 client 都会持久化写进 mootdx 配置文件**。逐台探测会把用户原本配好的服务器
-一路覆写，最后留下一台死的，还会连累同机其它用 mootdx 的程序。
+`server` 的 client 都会改写 mootdx 当前进程内的配置**。逐台探测会把原本的服务器
+一路覆写，最后留下一台死的，使随后的裸 factory 兜底失效。
 
 用 `with _preserve_mootdx_bestip() as keep:` 包住探测：选出可用服务器时调 `keep()`
 表示"这次覆写是想要的"，其余每条退出路径（**含异常**）自动还原。
 ⚠️ **别改回手动调还原函数**——那样再加一条提前返回就会漏掉一处，而漏掉的后果是
 静默给用户留下一台死服务器。另外快照**必须在 `config.setup()` 之后**取，否则拿到的是
 模块默认空值，"还原"反而把用户真实配置抹成空。
+
+容器/新用户的配置缺失时，必须先由 `_prepare_mootdx_config()` 写入合法种子配置，避免
+mootdx 0.11.x 自行触发耗时的 `bestip`；只有通过真实 K 线验证的服务器才允许由
+`_persist_mootdx_server()` 原子写回文件。Docker 用 `mootdx_data` 卷持久化
+`/home/appuser/.mootdx`，不要改回要求用户进容器手动初始化。
 
 ### 待处理 PR
 - PR #18（hejingchi）：start_date 功能 + 主题切换 + Windows 字体。不建议直接 merge（与 v0.2.6 冲突），start_date 功能值得后续自行实现。

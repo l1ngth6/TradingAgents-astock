@@ -73,7 +73,11 @@ APP_UID="$(id -u)" APP_GID="$(id -g)" \
   docker compose run --build --rm tradingagents
 ```
 
-两种入口共用 `.env` 和 `tradingagents_data` 数据卷，选择一种运行即可。Linux 建议传入当前用户的 UID/GID，使容器内 `appuser` 与宿主用户一致，并避免 `./reports` 或数据卷出现 root 权限文件；macOS/Windows Docker Desktop 通常不强制要求，但保留无妨。
+两种入口共用 `.env`、`tradingagents_data` 和 `mootdx_data` 数据卷，选择一种运行即可。Linux 建议传入当前用户的 UID/GID，使容器内 `appuser` 与宿主用户一致，并避免 `./reports` 或数据卷出现 root 权限文件；macOS/Windows Docker Desktop 通常不强制要求，但保留无妨。
+
+### mootdx 无需手动初始化
+
+容器首次实际读取通达信行情时，项目会自动并发预筛服务器、用真实 K 线验证可用性，并将选中的服务器保存到 `mootdx_data` 数据卷；容器重建后仍会复用。**无需进入容器运行 `python -m mootdx bestip`**。项目还会在调用 mootdx 前生成安全的初始配置，从而避免其在配置缺失时自动执行耗时的全量测速及输出误导性的“请手动运行”提示。若所在网络屏蔽 TCP 7709，行情工具会按原有逻辑尝试 HTTP 备用源；Web 服务启动不受影响，中文股票名无法解析时可直接输入 6 位代码。
 
 ---
 

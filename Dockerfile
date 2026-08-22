@@ -37,6 +37,7 @@ RUN if getent group "${APP_GID}" >/dev/null; then \
        /home/appuser/.tradingagents/cache \
        /home/appuser/.tradingagents/logs \
        /home/appuser/.tradingagents/memory \
+       /home/appuser/.mootdx \
        /home/appuser/app \
        /home/appuser/app/reports
 

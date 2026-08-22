@@ -45,6 +45,8 @@ def fake_tdx(monkeypatch):
     }
 
     monkeypatch.setattr(a_stock, "_TDX_SERVERS", servers)
+    monkeypatch.setattr(a_stock, "_prepare_mootdx_config", lambda: None)
+    monkeypatch.setattr(a_stock, "_persist_mootdx_server", lambda server: None)
     monkeypatch.setattr(a_stock, "_mootdx_client", None)
     monkeypatch.setattr(a_stock, "_mootdx_unavailable_until", 0.0)
 
@@ -166,6 +168,8 @@ def handshake_fails(monkeypatch):
     state = {"factory_calls": [], "bestip_used": False}
 
     monkeypatch.setattr(a_stock, "_TDX_SERVERS", servers)
+    monkeypatch.setattr(a_stock, "_prepare_mootdx_config", lambda: None)
+    monkeypatch.setattr(a_stock, "_persist_mootdx_server", lambda server: None)
     # 候选表 = 精选表 + mootdx 自带主机表；测试里只保留精选表，断言才可控
     monkeypatch.setattr(a_stock, "_candidate_tdx_servers", lambda: list(servers))
     monkeypatch.setattr(a_stock, "_mootdx_client", None)
@@ -262,10 +266,9 @@ def test_bestip_is_never_used(handshake_fails):
 def test_probing_restores_mootdx_bestip_when_nothing_works(handshake_fails, monkeypatch):
     """探测不能把用户配好的服务器覆写掉（codex 第五轮）。
 
-    mootdx 的 StdQuotes.__init__ 里有 `config.set('BESTIP', {'HQ': self.server})`
-    ——每建一次带 server 的 client 都会持久化写入配置文件。逐台探测 38 个候选等于
-    一路覆写，最后留下的是最后一台**失败的**服务器，裸 factory 兜底（读 BESTIP）
-    再也救不回来，还会连累同机上其它用 mootdx 的程序。
+    mootdx 的 StdQuotes.__init__ 里有 `config.set('BESTIP', {'HQ': self.server})`，
+    会一路覆写当前进程内的配置。最后留下最后一台**失败的**服务器时，裸 factory
+    兜底（读 BESTIP）就再也救不回来。
     """
     from mootdx import config as mootdx_config
 
@@ -341,3 +344,42 @@ def test_bestip_restored_even_if_probing_raises(handshake_fails, monkeypatch):
         a_stock._get_mootdx_client()
 
     assert store["BESTIP"] == persisted, "异常路径也必须还原"
+
+
+def test_fresh_config_is_seeded_without_running_bestip(monkeypatch, tmp_path):
+    """干净容器应直接得到合法配置，不能触发 mootdx 自带的全量测速。"""
+    from mootdx import config as mootdx_config
+
+    config_path = tmp_path / ".mootdx" / "config.json"
+    bestip_calls = {"n": 0}
+    monkeypatch.setattr(mootdx_config, "CONF", str(config_path))
+    monkeypatch.setattr(
+        mootdx_config,
+        "bestip",
+        lambda **kwargs: bestip_calls.__setitem__("n", bestip_calls["n"] + 1),
+    )
+
+    assert a_stock._prepare_mootdx_config() == config_path
+    mootdx_config.setup()
+
+    saved = _read_json(config_path)
+    assert bestip_calls["n"] == 0
+    assert saved["BESTIP"]["HQ"] == list(a_stock._TDX_SERVERS[0])
+
+
+def test_selected_server_is_persisted(monkeypatch, tmp_path):
+    """真实验证成功的服务器应写入配置，供重建后的容器复用。"""
+    from mootdx import config as mootdx_config
+
+    config_path = tmp_path / ".mootdx" / "config.json"
+    monkeypatch.setattr(mootdx_config, "CONF", str(config_path))
+
+    a_stock._persist_mootdx_server(("2.2.2.2", 7709))
+
+    assert _read_json(config_path)["BESTIP"]["HQ"] == ["2.2.2.2", 7709]
+
+
+def _read_json(path):
+    import json
+
+    return json.loads(path.read_text(encoding="utf-8"))

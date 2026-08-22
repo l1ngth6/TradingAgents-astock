@@ -10,6 +10,7 @@ services:
       - .env
     volumes:
       - tradingagents_data:/home/appuser/.tradingagents
+      - mootdx_data:/home/appuser/.mootdx
       - ./reports:/home/appuser/app/reports
     tty: true
     stdin_open: true
@@ -37,6 +38,7 @@ services:
       - "8501:8501"
     volumes:
       - tradingagents_data:/home/appuser/.tradingagents
+      - mootdx_data:/home/appuser/.mootdx
 
   ollama:
     image: ollama/ollama:latest
@@ -58,6 +60,7 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
     volumes:
       - tradingagents_data:/home/appuser/.tradingagents
+      - mootdx_data:/home/appuser/.mootdx
       - ./reports:/home/appuser/app/reports
     depends_on:
       - ollama
@@ -68,4 +71,5 @@ services:
 
 volumes:
   tradingagents_data:
+  mootdx_data:
   ollama_data:

@@ -11,6 +11,7 @@ from pathlib import Path
 RUNTIME_USER = "appuser"
 WRITABLE_PATHS = (
     Path("/home/appuser/.tradingagents"),
+    Path("/home/appuser/.mootdx"),
     Path("/home/appuser/app/reports"),
 )
 
