@@ -15,6 +15,9 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+ARG APP_UID=1000
+ARG APP_GID=1000
+
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
@@ -24,20 +27,26 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-wqy-microhei fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home appuser
-USER appuser
+RUN if getent group "${APP_GID}" >/dev/null; then \
+        true; \
+    else \
+        groupadd --gid "${APP_GID}" appuser; \
+    fi \
+    && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home appuser \
+    && install -d -m 0755 -o "${APP_UID}" -g "${APP_GID}" \
+       /home/appuser/.tradingagents/cache \
+       /home/appuser/.tradingagents/logs \
+       /home/appuser/.tradingagents/memory \
+       /home/appuser/app \
+       /home/appuser/app/reports
+
 WORKDIR /home/appuser/app
 
-# Pre-create the data dir (owned by appuser) BEFORE the named volume mounts onto
-# it. Docker copies an EMPTY named volume's ownership from the image directory it
-# mounts over; if that directory doesn't exist in the image, Docker creates the
-# mountpoint as root:root and the app — running as appuser — can't write its
-# cache/logs/memory. That is the "[Errno 13] Permission denied:
-# /home/appuser/.tradingagents/cache" reported in issue #46.
-RUN mkdir -p /home/appuser/.tradingagents/cache \
-             /home/appuser/.tradingagents/logs \
-             /home/appuser/.tradingagents/memory
+COPY --from=builder --chown=${APP_UID}:${APP_GID} /build .
+COPY docker/entrypoint.py /usr/local/bin/tradingagents-entrypoint.py
 
-COPY --from=builder --chown=appuser:appuser /build .
-
-ENTRYPOINT ["tradingagents"]
+# Entrypoint starts as root only to repair mounted-directory ownership, then
+# permanently drops privileges before executing either CLI or Web command.
+USER root
+ENTRYPOINT ["python", "/usr/local/bin/tradingagents-entrypoint.py"]
+CMD ["tradingagents"]

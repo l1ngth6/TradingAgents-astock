@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/simonlin1212/tradingagents-astock/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/simonlin1212/tradingagents-astock?style=social"/></a>
-  <a href="https://github.com/simonlin1212/tradingagents-astock/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/simonlin1212/tradingagents-astock?style=social"/></a>
+  <a href="https://github.com/l1ngth6/TradingAgents-astock/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/l1ngth6/TradingAgents-astock?style=social"/></a>
+  <a href="https://github.com/l1ngth6/TradingAgents-astock/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/l1ngth6/TradingAgents-astock?style=social"/></a>
   <a href="https://arxiv.org/abs/2412.20138"><img alt="Paper" src="https://img.shields.io/badge/paper-arXiv_2412.20138-B31B1B?logo=arxiv"/></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue"/></a>
   <a href="./CHANGES_FROM_UPSTREAM.md"><img alt="Changes" src="https://img.shields.io/badge/changes-CHANGES-orange"/></a>
@@ -136,7 +136,7 @@ All free, no API key, no point wall:
 
 ```bash
 # Python >= 3.10
-git clone https://github.com/simonlin1212/tradingagents-astock.git
+git clone https://github.com/l1ngth6/TradingAgents-astock.git
 cd tradingagents-astock
 pip install -e .
 
@@ -262,7 +262,7 @@ Important caveats:
 ---
 ## Web UI
 
-Built-in Streamlit visualization interface allows selecting LLM providers and models in the sidebar. Enter a stock code to perform one-click analysis, ideal for users who prefer not to write code.
+Built-in Streamlit visualization interface allows selecting LLM providers and models in the sidebar. Enter a stock code to perform one-click analysis, ideal for users who prefer not to write code. **Web is not an additional model or agent**: it runs the same `TradingAgentsGraph` as the CLI and only adds configuration controls, live progress, history, and Markdown/PDF export.
 
 ### Startup
 
@@ -416,7 +416,7 @@ Your environment has **an old version of `fpdf` (pyfpdf)** installed, which conf
 Starting from v0.2.12, the Dockerfile includes `fonts-noto-cjk` built-in. Simply rebuild with `docker build`. For older images, you can temporarily run `apt install fonts-noto-cjk`, or switch to Markdown export.
 
 **Q: Docker startup fails with `[Errno 13] Permission denied: /home/appuser/.tradingagents/cache`?**
-Older images did not pre-create the data directory. When the `docker-compose` named volume is mounted, Docker creates it as `root`-owned, but the process inside the container runs as `appuser` and cannot write to it. Starting from v0.2.14, the Dockerfile pre-creates `/home/appuser/.tradingagents` (cache/logs/memory) and sets ownership to `appuser`, so named volumes inherit this ownership. **To upgrade**: after `git pull`, rebuild the image with `docker compose build --no-cache`. If you want to keep the old data volume, first run `docker run --rm -v tradingagents_data:/d alpine chown -R 1000:1000 /d` to fix the ownership; otherwise, simply remove the volume with `docker volume rm tradingagents_data` and rebuild.
+The image now creates `appuser` with the build-time `APP_UID` / `APP_GID`, and its entrypoint repairs ownership of the state volume and `./reports` bind mount before dropping privileges. On Linux run `APP_UID="$(id -u)" APP_GID="$(id -g)" docker compose run --build --rm tradingagents`. There is no longer a need to assume `1000:1000` or delete the data volume.
 
 **Q: Some analyst reports (Sentiment/News/Fundamentals/Policy/Hot Money/Lock-up Expiry) are blank and not displayed?**
 These reports are generated after the corresponding Analyst calls data tools. **Empty reports are automatically skipped and not displayed.** The data sources themselves are healthy (Tencent/mootdx/Tonghuashun/Dongcai have been tested and return data). Reports are usually empty because **the selected model has weak tool-call capabilities** (e.g., some lightweight deepseek/minimax models are unstable when calling tools). It is recommended to switch to a model with more stable tool-calls (deepseek-chat / Tongyi / GLM-4 / Claude / GPT, etc.), or retry.
@@ -518,7 +518,7 @@ If this tool saved you time, a coffee is appreciated ☕
   <a href="https://buymeacoffee.com/simonlin1212"><img src="./assets/bmc-qr.png" width="180" alt="Buy Me a Coffee"></a>
 </p>
 
-> Want a feature that isn't here? Open an [Issue](https://github.com/simonlin1212/tradingagents-astock/issues); sponsors' issues go first.
+> Want a feature that isn't here? Open an [Issue](https://github.com/l1ngth6/TradingAgents-astock/issues); sponsors' issues go first.
 
 ---
 

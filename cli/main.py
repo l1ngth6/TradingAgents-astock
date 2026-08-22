@@ -1,5 +1,6 @@
 from typing import Optional
 import datetime
+import os
 import typer
 from pathlib import Path
 from functools import wraps
@@ -558,28 +559,61 @@ def get_user_selections():
     )
     selected_research_depth = select_research_depth()
 
-    # Step 6: LLM Provider
-    console.print(
-        create_question_box(
-            "Step 6: LLM Provider", "Select your LLM provider"
+    env_llm_profile = all(
+        os.getenv(name)
+        for name in (
+            "TRADINGAGENTS_LLM_PROVIDER",
+            "TRADINGAGENTS_QUICK_THINK_LLM",
+            "TRADINGAGENTS_DEEP_THINK_LLM",
         )
     )
-    selected_llm_provider, backend_url = select_llm_provider()
+    if env_llm_profile:
+        selected_llm_provider = DEFAULT_CONFIG["llm_provider"]
+        backend_url = DEFAULT_CONFIG.get("backend_url")
+        selected_shallow_thinker = DEFAULT_CONFIG["quick_think_llm"]
+        selected_deep_thinker = DEFAULT_CONFIG["deep_think_llm"]
+        if selected_llm_provider == "openai_compatible" and not backend_url:
+            raise ValueError(
+                "openai_compatible 需要 TRADINGAGENTS_LLM_BACKEND_URL。"
+            )
+        console.print(
+            "[green]✓ LLM 配置来自 .env：[/green] "
+            f"{selected_llm_provider} | quick={selected_shallow_thinker} | "
+            f"deep={selected_deep_thinker} | {backend_url or 'provider default'}"
+        )
+    else:
+        # Step 6: LLM Provider
+        console.print(
+            create_question_box(
+                "Step 6: LLM Provider", "Select your LLM provider"
+            )
+        )
+        selected_llm_provider, backend_url = select_llm_provider()
 
-    # Step 7: Thinking agents
-    console.print(
-        create_question_box(
-            "Step 7: Thinking Agents", "Select your thinking agents for analysis"
+        # Step 7: Thinking agents
+        console.print(
+            create_question_box(
+                "Step 7: Thinking Agents", "Select your thinking agents for analysis"
+            )
         )
-    )
-    selected_shallow_thinker = select_shallow_thinking_agent(selected_llm_provider)
-    selected_deep_thinker = select_deep_thinking_agent(selected_llm_provider)
+        selected_shallow_thinker = select_shallow_thinking_agent(selected_llm_provider)
+        selected_deep_thinker = select_deep_thinking_agent(selected_llm_provider)
 
     # Step 8: Provider-specific thinking configuration
     thinking_level = None
-    reasoning_effort = None
+    reasoning_effort = (
+        DEFAULT_CONFIG.get("openai_reasoning_effort")
+        if os.getenv("TRADINGAGENTS_OPENAI_REASONING_EFFORT") is not None
+        else None
+    )
     anthropic_effort = None
-    compatible_responses_api = False
+    responses_mode_from_env = (
+        os.getenv("TRADINGAGENTS_OPENAI_COMPATIBLE_USE_RESPONSES_API") is not None
+    )
+    compatible_responses_api = (
+        DEFAULT_CONFIG.get("openai_compatible_use_responses_api", False)
+        if responses_mode_from_env else False
+    )
 
     provider_lower = selected_llm_provider.lower()
     if provider_lower == "google":
@@ -591,14 +625,15 @@ def get_user_selections():
         )
         thinking_level = ask_gemini_thinking_config()
     elif provider_lower in {"openai", "openai_compatible"}:
-        console.print(
-            create_question_box(
-                "Step 8: Reasoning Effort",
-                "Configure OpenAI-compatible reasoning effort level"
+        if reasoning_effort is None:
+            console.print(
+                create_question_box(
+                    "Step 8: Reasoning Effort",
+                    "Configure OpenAI-compatible reasoning effort level"
+                )
             )
-        )
-        reasoning_effort = ask_openai_reasoning_effort()
-        if provider_lower == "openai_compatible":
+            reasoning_effort = ask_openai_reasoning_effort()
+        if provider_lower == "openai_compatible" and not responses_mode_from_env:
             compatible_responses_api = ask_openai_compatible_api_mode()
     elif provider_lower == "anthropic":
         console.print(

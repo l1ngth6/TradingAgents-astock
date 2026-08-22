@@ -13,14 +13,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/simonlin1212/tradingagents-astock/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/simonlin1212/tradingagents-astock?style=social"/></a>
-  <a href="https://github.com/simonlin1212/tradingagents-astock/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/simonlin1212/tradingagents-astock?style=social"/></a>
+  <a href="https://github.com/l1ngth6/TradingAgents-astock/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/l1ngth6/TradingAgents-astock?style=social"/></a>
+  <a href="https://github.com/l1ngth6/TradingAgents-astock/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/l1ngth6/TradingAgents-astock?style=social"/></a>
   <a href="https://arxiv.org/abs/2412.20138"><img alt="论文" src="https://img.shields.io/badge/论文-arXiv_2412.20138-B31B1B?logo=arxiv"/></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue"/></a>
   <a href="./CHANGES_FROM_UPSTREAM.md"><img alt="改动记录" src="https://img.shields.io/badge/改动记录-CHANGES-orange"/></a>
 </p>
 
 <p align="center">
+  <a href="#本分支快速部署说明">本分支部署</a> ·
   <a href="#为什么做这个-fork">为什么做这个 Fork</a> ·
   <a href="#与上游对比">与上游对比</a> ·
   <a href="#架构概览">架构概览</a> ·
@@ -30,6 +31,49 @@
   <a href="#web-ui">Web UI</a> ·
   <a href="#常见问题排错">排错</a>
 </p>
+
+---
+
+## 本分支快速部署说明
+
+本分支已针对**单一自定义 OpenAI-compatible Responses API 端点 + 多模型分工**完成适配。推荐直接复制预设环境文件：
+
+```bash
+cp .env.example2 .env
+# 编辑 .env，将 OPENAI_COMPATIBLE_API_KEY 替换为真实凭据
+```
+
+默认模型分工如下，全部使用 `thinking=high`：
+
+| 工作类型 | 模型 | Agent |
+|----------|------|-------|
+| 资料分析与非讨论工作 | `gpt-5.6-luna` | 7 个 Analyst、Quality Gate、Trader 等 |
+| 多空与风险讨论 | `deepseek-v4-flash` | Bull、Bear、Aggressive、Neutral、Conservative |
+| 深度综合决策 | `gpt-5.6-sol` | Research Manager、Portfolio Manager |
+
+三个模型共用 `.env` 中的 `TRADINGAGENTS_LLM_BACKEND_URL` 和 `OPENAI_COMPATIBLE_API_KEY`，统一调用 `/v1/responses`，不使用 `/v1/chat/completions`。具体配置见 [`.env.example2`](.env.example2)。
+
+### Web 与 CLI 二选一
+
+`web` 不是额外模型或独立分析服务，而是同一套 `TradingAgentsGraph` 的 Streamlit 前端。它已经在 Web 容器进程内运行完整分析流程，因此**不需要同时启动 `tradingagents` 服务**。
+
+Web 模式：
+
+```bash
+APP_UID="$(id -u)" APP_GID="$(id -g)" \
+  docker compose up --build web
+```
+
+打开 `http://localhost:8501`。
+
+CLI 模式：
+
+```bash
+APP_UID="$(id -u)" APP_GID="$(id -g)" \
+  docker compose run --build --rm tradingagents
+```
+
+两种入口共用 `.env` 和 `tradingagents_data` 数据卷，选择一种运行即可。Linux 建议传入当前用户的 UID/GID，使容器内 `appuser` 与宿主用户一致，并避免 `./reports` 或数据卷出现 root 权限文件；macOS/Windows Docker Desktop 通常不强制要求，但保留无妨。
 
 ---
 
@@ -145,7 +189,7 @@
 
 ```bash
 # Python >= 3.10
-git clone https://github.com/simonlin1212/tradingagents-astock.git
+git clone https://github.com/l1ngth6/TradingAgents-astock.git
 cd tradingagents-astock
 pip install -e .
 
@@ -276,7 +320,7 @@ tradingagents performance --json     # 机器读的 JSON
 
 ## Web UI
 
-内置 Streamlit 可视化界面，支持在侧边栏选择 LLM 供应商和模型，输入股票代码即可一键分析，适合不写代码的用户。
+内置 Streamlit 可视化界面，支持在侧边栏选择 LLM 供应商和模型，输入股票代码即可一键分析，适合不写代码的用户。**Web 不是额外的模型或 Agent**：它在后台调用与 CLI 完全相同的 `TradingAgentsGraph`，只增加配置表单、实时进度、历史记录和 Markdown/PDF 导出。
 
 ### 启动
 
@@ -434,7 +478,19 @@ ANTHROPIC_BASE_URL=https://api.kimi.com/coding/   # 或在 config 里写 backend
 你的环境里装了**旧版 `fpdf`（pyfpdf）**，它和本项目用的 `fpdf2` 都以 `fpdf` 名称导入、互相冲突。执行：`pip uninstall -y fpdf && pip install "fpdf2>=2.8.6"`。实在不行可改用「下载 Markdown」导出（零依赖，永远可用）。
 
 **Q: Docker 里怎么跑 Web UI？容器启动报 `Invalid value: File does not exist: web/app.py`？**
-用 compose 里的 `web` 服务：`docker compose up web`，然后开 http://localhost:8501 。
+用 compose 里的 `web` 服务：
+
+```bash
+APP_UID="$(id -u)" APP_GID="$(id -g)" docker compose up --build web
+```
+
+然后打开 http://localhost:8501 。CLI 则运行：
+
+```bash
+APP_UID="$(id -u)" APP_GID="$(id -g)" docker compose run --build --rm tradingagents
+```
+
+`APP_UID` / `APP_GID` 会作为镜像 build args 创建同 UID/GID 的 `appuser`；启动脚本修复 named volume 与 `./reports` bind mount 的属主后再降权运行。首次运行或 UID/GID 改变后建议先加 `--build`，或执行 `docker compose build --no-cache`。
 
 报这个错通常是因为命令写成了 `streamlit run web/app.py`——这条**依赖当前工作目录**，工作目录不对就找不到文件。正确的入口是 `tradingagents-web`（即 `web.launch:main`），它按 `__file__` 解析 `app.py` 的绝对路径，跟工作目录无关。本地跑同理，装完后直接 `tradingagents-web` 最稳。
 
@@ -442,7 +498,7 @@ ANTHROPIC_BASE_URL=https://api.kimi.com/coding/   # 或在 config 里写 backend
 v0.2.12 起 Dockerfile 已内置 `fonts-noto-cjk`，重新 `docker build` 即可。旧镜像可临时 `apt install fonts-noto-cjk`，或改用 Markdown 导出。
 
 **Q: Docker 启动报 `[Errno 13] Permission denied: /home/appuser/.tradingagents/cache`？**
-旧版镜像里没预建数据目录，`docker-compose` 的命名卷挂上来时被 Docker 建成 `root` 属主，而容器内进程以 `appuser` 运行、写不进去。v0.2.14 起 Dockerfile 已预建 `/home/appuser/.tradingagents`（cache/logs/memory）并归属 appuser，命名卷会继承该属主。**升级方式**：`git pull` 后 `docker compose build --no-cache` 重建镜像；若想保留旧数据卷可先 `docker run --rm -v tradingagents_data:/d alpine chown -R 1000:1000 /d` 修正属主，否则 `docker volume rm tradingagents_data` 后重建即可。
+新版镜像会按 `APP_UID` / `APP_GID` 创建 `appuser`，并由入口脚本在降权前修复 `/home/appuser/.tradingagents` 与 `./reports` 挂载目录的属主。使用上面的 UID/GID 命令并重新构建即可；不再需要假定宿主用户一定是 `1000:1000`，也不需要删除数据卷。
 
 **Q: 部分分析师报告（情绪/新闻/基本面/政策/游资/解禁）空白不显示？**
 这些报告由对应 Analyst 调用数据工具后生成，**空报告会被自动跳过不显示**。数据源本身是健康的（腾讯/mootdx/同花顺/东财实测出数）；报告为空通常是**所选模型 tool-call 能力弱**（如部分 deepseek/minimax 轻量模型不稳定地调用工具）。建议换用 tool-call 更稳的模型（deepseek-chat / 通义 / GLM-4 / Claude / GPT 等），或重试。
@@ -551,7 +607,7 @@ TradingAgents-Astock/
   <a href="https://buymeacoffee.com/simonlin1212"><img src="./assets/bmc-qr.png" width="180" alt="Buy Me a Coffee"></a>
 </p>
 
-> 想要什么功能？欢迎开 [Issue](https://github.com/simonlin1212/tradingagents-astock/issues) 提需求，赞助者的 Issue 优先处理。
+> 想要什么功能？欢迎开 [Issue](https://github.com/l1ngth6/TradingAgents-astock/issues) 提需求，赞助者的 Issue 优先处理。
 
 ---
 

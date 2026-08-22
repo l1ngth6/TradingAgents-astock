@@ -135,10 +135,17 @@ def _render_analysis_controls(raw_ticker: str, trade_date_value: date) -> None:
 def _render_llm_config() -> None:
     """Render LLM provider and model selection controls."""
 
+    default_provider = DEFAULT_CONFIG.get("llm_provider", "minimax")
+    default_provider_idx = (
+        _PROVIDER_KEYS.index(default_provider)
+        if default_provider in _PROVIDER_KEYS
+        else 0
+    )
     provider_idx = st.selectbox(
         "LLM 供应商",
         range(len(_PROVIDERS)),
         format_func=lambda i: _PROVIDER_DISPLAY[i],
+        index=default_provider_idx,
         key="llm_provider_idx",
         help="选择你配置了 API Key 的供应商",
     )
@@ -172,14 +179,23 @@ def _render_llm_config() -> None:
         )
         st.session_state["deep_think_llm"] = deep_values[deep_idx]
     else:
-        custom_quick = st.text_input("快速思考模型 ID", key="custom_quick_model")
-        custom_deep = st.text_input("深度思考模型 ID", key="custom_deep_model")
+        custom_quick = st.text_input(
+            "快速思考模型 ID",
+            value=DEFAULT_CONFIG.get("quick_think_llm", ""),
+            key="custom_quick_model",
+        )
+        custom_deep = st.text_input(
+            "深度思考模型 ID",
+            value=DEFAULT_CONFIG.get("deep_think_llm", ""),
+            key="custom_deep_model",
+        )
         st.session_state["quick_think_llm"] = custom_quick
         st.session_state["deep_think_llm"] = custom_deep
 
     base_url_required = provider_key == "openai_compatible"
     st.text_input(
         "API Base URL（第三方/代理" + ("·必填" if base_url_required else "，可选") + "）",
+        value=DEFAULT_CONFIG.get("backend_url") or "",
         key="llm_base_url",
         placeholder="例: https://your-relay.example/v1",
         help=(
@@ -199,6 +215,7 @@ def _render_llm_config() -> None:
         )
         st.checkbox(
             "端点使用 Responses API（/v1/responses）",
+            value=DEFAULT_CONFIG.get("openai_compatible_use_responses_api", False),
             key="openai_compatible_use_responses_api",
             help=(
                 "默认关闭并走 /v1/chat/completions，以兼容现有中继。"
@@ -209,10 +226,17 @@ def _render_llm_config() -> None:
     if provider_key in {"openai", "openai_compatible"}:
         reasoning_values = [None, "low", "medium", "high", "xhigh"]
         reasoning_labels = ["服务端默认", "Low", "Medium", "High", "XHigh"]
+        default_reasoning = DEFAULT_CONFIG.get("openai_reasoning_effort")
+        default_reasoning_idx = (
+            reasoning_values.index(default_reasoning)
+            if default_reasoning in reasoning_values
+            else 0
+        )
         reasoning_idx = st.selectbox(
             "推理强度（reasoning effort）",
             range(len(reasoning_values)),
             format_func=lambda i: reasoning_labels[i],
+            index=default_reasoning_idx,
             key="openai_reasoning_effort_idx",
             help="会转发给模型；具体支持哪些等级取决于所选模型和网关。",
         )

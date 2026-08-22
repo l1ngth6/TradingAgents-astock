@@ -1,6 +1,37 @@
+import json
 import os
 
 _TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a strict boolean environment variable."""
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{name} 必须是 true/false、1/0、yes/no 或 on/off，实际为 {raw!r}"
+    )
+
+
+def _env_json_object(name: str) -> dict:
+    """Read a JSON-object environment variable, failing loudly on mistakes."""
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{name} 必须是合法 JSON：{exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} 必须是以角色名为键的 JSON 对象")
+    return value
+
 
 DEFAULT_CONFIG = {
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
@@ -12,18 +43,24 @@ DEFAULT_CONFIG = {
     # Pending entries are never pruned. None disables rotation entirely.
     "memory_log_max_entries": None,
     # LLM settings
-    "llm_provider": "openai",
-    "deep_think_llm": "gpt-5.4",
-    "quick_think_llm": "gpt-5.4-mini",
+    "llm_provider": os.getenv("TRADINGAGENTS_LLM_PROVIDER", "openai"),
+    "deep_think_llm": os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "gpt-5.4"),
+    "quick_think_llm": os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-5.4-mini"),
     # When None, each provider's client falls back to its own default endpoint
     # (api.openai.com for OpenAI, generativelanguage.googleapis.com for Gemini, ...).
     # The CLI overrides this per provider when the user picks one. Keeping a
     # provider-specific URL here would leak (e.g. OpenAI's /v1 was previously
     # being forwarded to Gemini, producing malformed request URLs).
-    "backend_url": None,
+    "backend_url": (
+        os.getenv("TRADINGAGENTS_LLM_BACKEND_URL")
+        or os.getenv("BACKEND_URL")
+        or None
+    ),
     # openai_compatible 默认继续走 Chat Completions，兼容既有中继。若自建端点
     # 实现的是 OpenAI Responses API（/v1/responses），显式开启此项。
-    "openai_compatible_use_responses_api": False,
+    "openai_compatible_use_responses_api": _env_bool(
+        "TRADINGAGENTS_OPENAI_COMPATIBLE_USE_RESPONSES_API"
+    ),
     # 单次回复的最大输出 token 数。None = 用 provider 自己的默认值。
     # 报告写到一半就断，通常就是撞了这个上限（不是上下文超长）——把它调大即可（#91）。
     # 走 anthropic 通道跑**第三方模型**（Kimi 等）时尤其要注意：langchain-anthropic
@@ -44,11 +81,13 @@ DEFAULT_CONFIG = {
     #       "bear": {"provider": "qwen",     "model": "qwen-plus"},
     #   }
     # provider 省略则沿用 llm_provider；合法角色名见 graph/setup.py 的 ROLE_KEYS。
-    "role_llms": {},
+    "role_llms": _env_json_object("TRADINGAGENTS_ROLE_LLMS"),
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     # 同时适用于 openai 与 openai_compatible；兼容端点是否接受具体等级由服务端决定。
-    "openai_reasoning_effort": None,    # "medium", "high", "low", etc.
+    "openai_reasoning_effort": os.getenv(
+        "TRADINGAGENTS_OPENAI_REASONING_EFFORT"
+    ),                                  # "medium", "high", "low", etc.
     "anthropic_effort": None,           # "high", "medium", "low"
     # ── Claude Agent SDK provider（走个人 Pro/Max 订阅额度，可选依赖 [agentsdk]）──
     # 与内置 anthropic provider 的区别：anthropic 走 ANTHROPIC_API_KEY = **按 token 计费**；
