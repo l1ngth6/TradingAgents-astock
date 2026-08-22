@@ -8,7 +8,12 @@ model + a generic API key, with no hard-coded vendor defaults.
 import pytest
 
 from tradingagents.llm_clients.factory import _OPENAI_COMPATIBLE, create_llm_client
-from tradingagents.llm_clients.openai_client import NormalizedChatOpenAI, OpenAIClient
+from tradingagents.llm_clients.openai_client import (
+    DeepSeekChatOpenAI,
+    NormalizedChatOpenAI,
+    OpenAIClient,
+    OpenAICompatibleChatOpenAI,
+)
 
 
 @pytest.mark.unit
@@ -47,6 +52,47 @@ class TestOpenAICompatibleClient:
         # Chat Completions (not OpenAI's Responses API) for max compatibility.
         assert isinstance(llm, NormalizedChatOpenAI)
         assert str(llm.openai_api_base) == "https://relay.example/v1"
+
+    def test_responses_api_can_be_enabled_explicitly(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        client = OpenAIClient(
+            "gpt-5.6-sol",
+            base_url="https://relay.example/v1",
+            provider="openai_compatible",
+            use_responses_api=True,
+            reasoning_effort="high",
+        )
+        llm = client.get_llm()
+        assert llm.use_responses_api is True
+        assert llm.reasoning_effort == "high"
+
+    def test_responses_api_remains_off_by_default(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        llm = OpenAIClient(
+            "custom-model",
+            base_url="https://relay.example/v1",
+            provider="openai_compatible",
+        ).get_llm()
+        assert not llm.use_responses_api
+
+    def test_deepseek_chat_model_gets_reasoning_roundtrip_adapter(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        llm = OpenAIClient(
+            "deepseek-v4-flash",
+            base_url="https://relay.example/v1",
+            provider="openai_compatible",
+        ).get_llm()
+        assert isinstance(llm, DeepSeekChatOpenAI)
+
+    def test_responses_mode_uses_generic_compatible_adapter(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        llm = OpenAIClient(
+            "deepseek-v4-flash",
+            base_url="https://relay.example/v1",
+            provider="openai_compatible",
+            use_responses_api=True,
+        ).get_llm()
+        assert isinstance(llm, OpenAICompatibleChatOpenAI)
 
     def test_falls_back_to_openai_api_key(self, monkeypatch):
         monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)

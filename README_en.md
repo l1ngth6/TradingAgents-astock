@@ -298,10 +298,12 @@ All configuration is passed in through the `config` dictionary. Complete options
 
 | Parameter | Default Value | Description |
 |------|--------|------|
-| `llm_provider` | `"minimax"` | LLM provider: `minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` |
+| `llm_provider` | `"minimax"` | LLM provider: `minimax` / `deepseek` / `qwen` / `glm` / `openai` / `openai_compatible` / `anthropic` / `google` / `xai` / `ollama` |
 | `deep_think_llm` | `"MiniMax-M2.7"` | Model used by the Research Manager + Portfolio Manager |
 | `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | Model used by all Analysts / Researchers / Traders |
 | `backend_url` | `None` | Custom API endpoint / third-party relay gateway. Can be filled in via the Web UI sidebar or the `.env` file's `BACKEND_URL`; useful for accessing Claude / OpenAI from within China via a proxy |
+| `openai_compatible_use_responses_api` | `False` | Custom-endpoint protocol: `False` uses `/v1/chat/completions`; `True` uses `/v1/responses` |
+| `openai_reasoning_effort` | `None` | Global reasoning effort for OpenAI/OpenAI-compatible models (`low` / `medium` / `high` / `xhigh`, subject to endpoint support) |
 | `role_llms` | `{}` | **Optional**: give individual roles a different model (e.g. bull vs bear from different vendors). Empty = every role uses the quick/deep pair as before. See "Per-role models" below. #39 |
 | `max_tokens` | `None` | Max output tokens per reply. `None` = the provider's own default. **If a report stops mid-sentence, raise this first** (it is the output cap, not the context window); also settable via `TRADINGAGENTS_MAX_TOKENS`. #91 |
 | `output_language` | `"Chinese"` | Language for report output (internal debates are always in English) |
@@ -316,7 +318,7 @@ All configuration is passed in through the `config` dictionary. Complete options
 
 By default every role shares the `quick_think_llm` / `deep_think_llm` pair — **most people run a single vendor and never need this**.
 
-If you do have several models available, you can assign one to a specific role. The motivating case is **giving the bull and bear researchers models from different vendors**: one model playing both sides tends to agree with itself, and real rebuttals only show up once the underlying models differ.
+If you do have several models available, you can assign a model or thinking level to a specific role. The motivating case is **giving the bull and bear researchers models from different vendors**: one model playing both sides tends to agree with itself, and real rebuttals only show up once the underlying models differ.
 
 ```python
 config = {
@@ -328,6 +330,8 @@ config = {
         "bear": {"provider": "glm",  "model": "glm-4.6"},
         # omit provider to keep llm_provider and only swap the model:
         "portfolio_manager": {"model": "deepseek-reasoner"},
+        # omit model to inherit this role's normal quick/deep model:
+        "research_manager": {"thinking_level": "high"},
     },
 }
 ```
@@ -344,7 +348,8 @@ Valid role names (anything you omit keeps the quick/deep default):
 Notes:
 
 - **A misspelled role name raises immediately** rather than being ignored — otherwise you would believe the config took effect when it did not.
-- **Identical provider + model share one instance**, so listing seven roles does not open seven connections.
+- **Identical provider + model + endpoint + thinking level share one instance**, so listing seven roles does not open seven connections.
+- Generic `thinking_level` maps to `reasoning_effort` for OpenAI/OpenAI-compatible/Azure, `thinking_level` for Google, and `effort` for Anthropic. Set it explicitly to `None` for the provider default.
 - Each provider uses **its own** API key variable (`DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` / `ZHIPU_API_KEY` …); a missing one is reported by name.
 - `backend_url` is **not** carried across vendors (it belongs to the main provider); set `backend_url` inside the role entry if you need one.
 - With the `claude_agent_sdk` subscription override on, roles listed in `role_llms` **bypass the subscription and bill per token**; the affected roles are named in a startup warning.
@@ -357,7 +362,20 @@ Notes:
 Each provider uses **its own environment variable**, not `OPENAI_API_KEY`: DeepSeek=`DEEPSEEK_API_KEY`, Tongyi=`DASHSCOPE_API_KEY`, Zhipu=`ZHIPU_API_KEY`, MiniMax=`MINIMAX_API_KEY`, xAI=`XAI_API_KEY`, OpenRouter=`OPENROUTER_API_KEY`, OpenAI-Compatible (Custom)=`OPENAI_COMPATIBLE_API_KEY`. Set the corresponding variable in the `.env` file at the project root and **restart** the program. (Starting from v0.2.12, if the key is missing, it will directly prompt which variable name to use.)
 
 **Q: Want to connect to an OpenAI-compatible third-party gateway/relay (9Router, AI Router, self-built proxy) with a custom base_url + model?**
-Use the **「OpenAI-Compatible (Custom base_url)」** option (added in v0.2.20). In the Web sidebar, select it under "LLM Provider" → Manually enter the model name supported by your gateway under "Fast/Deep Think Model ID" → Enter your gateway address under "API Base URL" (e.g., `https://your-relay.example/v1`) → Set `OPENAI_COMPATIBLE_API_KEY=your_key` in `.env` (it also accepts `OPENAI_API_KEY`). For CLI, after selecting `OpenAI-Compatible`, it will prompt for the Base URL. It uses standard Chat Completions (not OpenAI Responses API, for best compatibility), and the model name can be freely entered without being restricted by the built-in list. The equivalent configuration is: `llm_provider="openai_compatible"` + `backend_url="<your_gateway>"` + `deep_think_llm/quick_think_llm="<your_model>"`.
+Use the **「OpenAI-Compatible (Custom base_url)」** option (added in v0.2.20). In the Web sidebar, select it under "LLM Provider" → Manually enter the model name supported by your gateway under "Fast/Deep Think Model ID" → Enter your gateway address under "API Base URL" (e.g., `https://your-relay.example/v1`) → Set `OPENAI_COMPATIBLE_API_KEY=your_key` in `.env` (it also accepts `OPENAI_API_KEY`). For CLI, after selecting `OpenAI-Compatible`, it will prompt for the Base URL. Chat Completions remains the backward-compatible default; enable Responses API in Web/CLI or set `openai_compatible_use_responses_api=True` when your endpoint implements `/v1/responses`. Model IDs are unrestricted.
+
+```python
+config["llm_provider"] = "openai_compatible"
+config["backend_url"] = "http://192.168.2.221:8080/v1"
+config["quick_think_llm"] = "gpt-5.6-luna"
+config["deep_think_llm"] = "gpt-5.6-sol"
+config["openai_compatible_use_responses_api"] = True
+config["openai_reasoning_effort"] = "medium"
+config["role_llms"] = {
+    "market": {"model": "deepseek-v4-flash", "thinking_level": "low"},
+    "research_manager": {"thinking_level": "high"},
+}
+```
 
 **Q: I have Python 3.12/3.14 installed, but `pip install -e .` says `requires a different Python: 3.9.6 not in '>=3.10'`?**
 The **3.9.6 in that message is the interpreter your current `pip` is bound to** — the newer version you installed is not the one being used (on macOS, the bundled `pip3` often points at the system 3.9). Check which interpreter is running:

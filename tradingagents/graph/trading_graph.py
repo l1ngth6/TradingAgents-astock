@@ -49,7 +49,7 @@ from tradingagents.agents.utils.agent_utils import (
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
 from .conditional_logic import ConditionalLogic
-from .setup import ROLE_KEYS, GraphSetup
+from .setup import DEEP_ROLES, ROLE_KEYS, GraphSetup
 from .propagation import Propagator
 from .reflection import Reflector
 from .signal_processing import SignalProcessor
@@ -64,7 +64,24 @@ _PROVIDER_SPECIFIC_KWARGS = frozenset({
     "reasoning_effort",   # openai
     "thinking_level",     # google
     "effort",             # anthropic
+    "use_responses_api",  # openai_compatible transport mode
 })
+
+_ROLE_LLM_SPEC_KEYS = frozenset({
+    "provider", "model", "backend_url", "api_key", "thinking_level",
+})
+
+
+def _thinking_kwarg_for_provider(provider: str) -> str | None:
+    """Map the generic role-level thinking field to a provider kwarg."""
+    provider = provider.lower()
+    if provider == "google":
+        return "thinking_level"
+    if provider == "anthropic":
+        return "effort"
+    if provider in {"openai", "openai_compatible", "azure"}:
+        return "reasoning_effort"
+    return None
 
 
 def _normalize_yfinance_ticker(ticker: str) -> str:
@@ -306,8 +323,8 @@ class TradingAgentsGraph:
         默认是空表 —— 不配任何角色时行为与以前完全一致（全部走 quick/deep 两档）。
         配了才有意义：让多空辩手用不同厂商的模型，避免同源模型互相不反驳。
 
-        相同 (provider, model, endpoint) 的角色复用同一个实例，不会因为写了 7 个
-        角色就建 7 条连接。
+        相同 (provider, model, endpoint, thinking level) 的角色复用同一个实例，
+        不会因为写了 7 个角色就建 7 条连接。
         """
         specs = self.config.get("role_llms") or {}
         if not specs:
@@ -347,12 +364,23 @@ class TradingAgentsGraph:
         cache: Dict[tuple, Any] = {}
         resolved: Dict[str, Any] = {}
         for role, spec in specs.items():
-            if not isinstance(spec, dict) or not spec.get("model"):
+            if not isinstance(spec, dict) or not spec or not (
+                spec.get("model") or "thinking_level" in spec
+            ):
                 raise ValueError(
-                    f"role_llms['{role}'] 必须是带 model 的字典，"
-                    f'例如 {{"provider": "deepseek", "model": "deepseek-chat"}}。'
+                    f"role_llms['{role}'] 必须是带 model 的字典，或带 thinking_level 的字典，"
+                    f'例如 {{"model": "gpt-5.6-sol", "thinking_level": "high"}}。'
+                )
+            unknown_keys = sorted(set(spec) - _ROLE_LLM_SPEC_KEYS)
+            if unknown_keys:
+                raise ValueError(
+                    f"role_llms['{role}'] 有无法识别的配置项：{unknown_keys}。"
+                    f"合法配置项：{', '.join(sorted(_ROLE_LLM_SPEC_KEYS))}。"
                 )
             provider = spec.get("provider") or main_provider
+            model = spec.get("model") or self.config[
+                "deep_think_llm" if role in DEEP_ROLES else "quick_think_llm"
+            ]
             # backend_url 是给主 provider 配的端点。换了厂商还把它带过去，请求就会
             # 发到另一家的网关（和 agent_sdk 降级那里同一个坑）。None = 用该
             # provider 自己的默认端点。
@@ -373,14 +401,41 @@ class TradingAgentsGraph:
                       if k not in _PROVIDER_SPECIFIC_KWARGS}
             )
 
-            key = (provider.lower(), spec["model"], base_url, spec.get("api_key"))
+            client_kwargs = dict(role_kwargs)
+            thinking_kwarg = _thinking_kwarg_for_provider(provider)
+            if "thinking_level" in spec:
+                thinking_level = spec["thinking_level"]
+                if thinking_level is not None and (
+                    not isinstance(thinking_level, str) or not thinking_level.strip()
+                ):
+                    raise ValueError(
+                        f"role_llms['{role}'].thinking_level 必须是非空字符串或 None。"
+                    )
+                if thinking_kwarg is None and thinking_level is not None:
+                    raise ValueError(
+                        f"provider '{provider}' 不支持通用 thinking_level 映射；"
+                        f"无法应用到角色 '{role}'。"
+                    )
+                if thinking_kwarg is not None:
+                    if thinking_level is None:
+                        client_kwargs.pop(thinking_kwarg, None)
+                    else:
+                        client_kwargs[thinking_kwarg] = thinking_level.strip()
+
+            effective_thinking = (
+                (thinking_kwarg, client_kwargs.get(thinking_kwarg))
+                if thinking_kwarg else None
+            )
+            key = (
+                provider.lower(), model, base_url, spec.get("api_key"),
+                effective_thinking,
+            )
             if key not in cache:
-                client_kwargs = dict(role_kwargs)
                 if spec.get("api_key"):
                     client_kwargs["api_key"] = spec["api_key"]
                 cache[key] = create_llm_client(
                     provider=provider,
-                    model=spec["model"],
+                    model=model,
                     base_url=base_url,
                     **client_kwargs,
                 ).get_llm()
@@ -407,10 +462,16 @@ class TradingAgentsGraph:
             if thinking_level:
                 kwargs["thinking_level"] = thinking_level
 
-        elif provider == "openai":
+        elif provider in {"openai", "openai_compatible"}:
             reasoning_effort = self.config.get("openai_reasoning_effort")
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
+
+            if (
+                provider == "openai_compatible"
+                and self.config.get("openai_compatible_use_responses_api")
+            ):
+                kwargs["use_responses_api"] = True
 
         elif provider == "anthropic":
             effort = self.config.get("anthropic_effort")

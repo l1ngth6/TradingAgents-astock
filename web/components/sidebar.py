@@ -194,9 +194,29 @@ def _render_llm_config() -> None:
     )
     if base_url_required:
         st.caption(
-            "已选「OpenAI 兼容（自定义）」：**Base URL 必填**（你的网关，走标准 Chat "
-            "Completions），模型 ID 手动填写，Key 在 .env 设 `OPENAI_COMPATIBLE_API_KEY`。"
+            "已选「OpenAI 兼容（自定义）」：**Base URL 必填**。默认走标准 Chat "
+            "Completions；模型 ID 手动填写，Key 在 .env 设 `OPENAI_COMPATIBLE_API_KEY`。"
         )
+        st.checkbox(
+            "端点使用 Responses API（/v1/responses）",
+            key="openai_compatible_use_responses_api",
+            help=(
+                "默认关闭并走 /v1/chat/completions，以兼容现有中继。"
+                "仅当你的自建端点明确实现 OpenAI Responses API 时开启。"
+            ),
+        )
+
+    if provider_key in {"openai", "openai_compatible"}:
+        reasoning_values = [None, "low", "medium", "high", "xhigh"]
+        reasoning_labels = ["服务端默认", "Low", "Medium", "High", "XHigh"]
+        reasoning_idx = st.selectbox(
+            "推理强度（reasoning effort）",
+            range(len(reasoning_values)),
+            format_func=lambda i: reasoning_labels[i],
+            key="openai_reasoning_effort_idx",
+            help="会转发给模型；具体支持哪些等级取决于所选模型和网关。",
+        )
+        st.session_state["openai_reasoning_effort"] = reasoning_values[reasoning_idx]
 
     # ── 个人 Claude 订阅额度（可选，仅个人自用）────────────────────────
     _scope_labels = [

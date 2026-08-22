@@ -300,11 +300,28 @@ def ask_openai_reasoning_effort() -> str:
     choices = [
         questionary.Choice("Medium (Default)", "medium"),
         questionary.Choice("High (More thorough)", "high"),
+        questionary.Choice("XHigh (Maximum, if supported)", "xhigh"),
         questionary.Choice("Low (Faster)", "low"),
     ]
     return questionary.select(
         "Select Reasoning Effort:",
         choices=choices,
+        style=questionary.Style([
+            ("selected", "fg:cyan noinherit"),
+            ("highlighted", "fg:cyan noinherit"),
+            ("pointer", "fg:cyan noinherit"),
+        ]),
+    ).ask()
+
+
+def ask_openai_compatible_api_mode() -> bool:
+    """Choose the wire API exposed by a custom OpenAI-compatible endpoint."""
+    return questionary.select(
+        "Select API mode exposed by the custom endpoint:",
+        choices=[
+            questionary.Choice("Chat Completions (/v1/chat/completions, default)", False),
+            questionary.Choice("Responses API (/v1/responses)", True),
+        ],
         style=questionary.Style([
             ("selected", "fg:cyan noinherit"),
             ("highlighted", "fg:cyan noinherit"),

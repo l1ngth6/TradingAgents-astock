@@ -317,6 +317,8 @@ streamlit run web/app.py
 | `deep_think_llm` | `"MiniMax-M2.7"` | Research Manager + Portfolio Manager 用的模型 |
 | `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | 所有 Analyst / Researcher / Trader 用的模型 |
 | `backend_url` | `None` | 自定义 API 端点 / 第三方中转网关。可在 Web UI 侧边栏填写，或用 `.env` 的 `BACKEND_URL`；方便国内通过代理访问 Claude / OpenAI |
+| `openai_compatible_use_responses_api` | `False` | 自定义 OpenAI 兼容端点的协议：`False` 走 `/v1/chat/completions`；`True` 走 `/v1/responses` |
+| `openai_reasoning_effort` | `None` | OpenAI / OpenAI 兼容端点的全局推理强度（如 `low` / `medium` / `high` / `xhigh`）；`None` 使用服务端默认 |
 | `role_llms` | `{}` | **可选**：给单个角色指定另一家模型（如多空辩手用不同厂商），留空 = 全部沿用 quick/deep 两档，行为不变。见下方「分角色模型」 #39 |
 | `max_tokens` | `None` | 单次回复的最大输出 token 数。`None` = 用 provider 默认值。**报告写到一半就断，先调这里**（不是上下文超长）；也可用环境变量 `TRADINGAGENTS_MAX_TOKENS`。#91 |
 | `output_language` | `"Chinese"` | 报告输出语言（内部辩论始终英文） |
@@ -333,7 +335,7 @@ streamlit run web/app.py
 
 默认所有角色共用 `quick_think_llm` / `deep_think_llm` 两档——**大多数人只有一家模型，不需要碰这一项**。
 
-如果你手上有多家模型，可以给单个角色单独指定。最典型的用法是**让多空辩手用不同厂商的模型**：同一个模型分饰多角时倾向于互相附和，换成不同底座才会真的出现反驳。
+如果你手上有多家模型，可以给单个角色单独指定模型或思考强度。最典型的用法是**让多空辩手用不同厂商的模型**：同一个模型分饰多角时倾向于互相附和，换成不同底座才会真的出现反驳。
 
 ```python
 config = {
@@ -345,6 +347,8 @@ config = {
         "bear": {"provider": "glm",     "model": "glm-4.6"},
         # provider 省略则沿用 llm_provider，只换模型：
         "portfolio_manager": {"model": "deepseek-reasoner"},
+        # 也可只覆盖思考强度，模型自动继承该角色原来的 quick/deep 档：
+        "research_manager": {"thinking_level": "high"},
     },
 }
 ```
@@ -361,7 +365,8 @@ config = {
 几点说明：
 
 - **角色名写错会直接报错**，不会静默忽略——否则你会以为配置生效了，实际没有。
-- **相同的 provider + model 只建一个实例**，写 7 个角色不会开 7 条连接。
+- **相同的 provider + model + endpoint + thinking level 只建一个实例**，写 7 个角色不会开 7 条连接。
+- `thinking_level` 是跨 provider 的通用写法：OpenAI/OpenAI-compatible/Azure 映射为 `reasoning_effort`，Google 映射为 `thinking_level`，Anthropic 映射为 `effort`；显式写 `None` 表示该角色使用服务端默认值。
 - 每家 provider 用**自己的** API Key 环境变量（`DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` / `ZHIPU_API_KEY` …），缺哪个会指名报出来。
 - 换了 provider 时**不会**把 `backend_url` 带过去（那是给主 provider 配的端点），需要的话在该角色里单独写 `backend_url`。
 - 同时开着 `claude_agent_sdk` 订阅覆盖时，`role_llms` 里配的角色会**绕开订阅按 token 计费**，启动时会点名警告是哪几个。
@@ -374,7 +379,24 @@ config = {
 每个供应商用**各自的环境变量**，不是 OPENAI_API_KEY：DeepSeek=`DEEPSEEK_API_KEY`、通义=`DASHSCOPE_API_KEY`、智谱=`ZHIPU_API_KEY`、MiniMax=`MINIMAX_API_KEY`、xAI=`XAI_API_KEY`、OpenRouter=`OPENROUTER_API_KEY`、OpenAI 兼容（自定义）=`OPENAI_COMPATIBLE_API_KEY`。在项目根目录 `.env` 里设置对应变量后**重启**程序。（v0.2.12 起缺 key 会直接提示该用哪个变量名。）
 
 **Q: 想接一个 OpenAI 兼容的第三方网关/中继（9Router、AI Router、自建代理），自定义 base_url + model？**
-用 **「OpenAI 兼容（自定义 base_url）」** 这一档（v0.2.20 新增）。Web 侧栏「LLM 供应商」选它 →「快速/深度思考模型 ID」手动填你网关支持的 model 名 →「API Base URL」填你的网关地址（如 `https://your-relay.example/v1`）→ `.env` 里设 `OPENAI_COMPATIBLE_API_KEY=你的key`（也接受 `OPENAI_API_KEY`）。CLI 方式选 `OpenAI-Compatible` 后会提示输入 Base URL。它走标准 Chat Completions（非 OpenAI Responses API，兼容性最好），model 名自由填、不受内置清单限制。配置方式等价：`llm_provider="openai_compatible"` + `backend_url="<你的网关>"` + `deep_think_llm/quick_think_llm="<你的model>"`。
+用 **「OpenAI 兼容（自定义 base_url）」** 这一档（v0.2.20 新增）。Web 侧栏「LLM 供应商」选它 →「快速/深度思考模型 ID」手动填你网关支持的 model 名 →「API Base URL」填你的网关地址（如 `https://your-relay.example/v1`）→ `.env` 里设 `OPENAI_COMPATIBLE_API_KEY=你的key`（也接受 `OPENAI_API_KEY`）。CLI 方式选 `OpenAI-Compatible` 后会提示输入 Base URL。默认走标准 Chat Completions；若网关实现的是 Responses API，可在 Web/CLI 开启 Responses 模式，或在配置中设 `openai_compatible_use_responses_api=True`。model 名自由填、不受内置清单限制。
+
+同一端点使用不同 quick/deep 模型，并给个别角色第三种模型的完整示例：
+
+```python
+config["llm_provider"] = "openai_compatible"
+config["backend_url"] = "http://192.168.2.221:8080/v1"
+config["quick_think_llm"] = "gpt-5.6-luna"
+config["deep_think_llm"] = "gpt-5.6-sol"
+config["openai_compatible_use_responses_api"] = True  # 端点若只支持 Chat Completions 则保持 False
+config["openai_reasoning_effort"] = "medium"          # quick/deep 的全局默认
+config["role_llms"] = {
+    "market": {"model": "deepseek-v4-flash", "thinking_level": "low"},
+    "research_manager": {"thinking_level": "high"},
+}
+```
+
+这里 quick 角色默认使用 `gpt-5.6-luna`，deep 角色（Research/Portfolio Manager）默认使用 `gpt-5.6-sol`；`market` 单独改用 `deepseek-v4-flash`。三个模型仍共用同一个 `backend_url` 和 API Key。
 
 **Q: 明明装了 Python 3.12/3.14，`pip install -e .` 却报 `requires a different Python: 3.9.6 not in '>=3.10'`？**
 报错里的 **3.9.6 就是当前这个 `pip` 绑定的解释器版本**——你装的新版本没被它用上（macOS 自带的 `pip3` 常指向系统 3.9）。先确认是哪个解释器在跑：
@@ -583,5 +605,3 @@ config["agent_sdk_quick_model"] = "sonnet"    # 分析师节点
 #### 依赖说明
 
 `[agentsdk]` 的依赖链是 `claude-agent-sdk → mcp → httpx2`，**不碰 httpx**，与 mootdx 的 `httpx<0.26` 无冲突（已 `uv lock` 实测）——和 #87 里被移除的 `[google]` 情况不同，不需要单开 venv。
-
-

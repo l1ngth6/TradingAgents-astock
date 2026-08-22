@@ -82,7 +82,8 @@ API `status=incomplete` + `incomplete_details.reason=max_output_tokens`**。最�
 可选，默认空表＝完全维持 quick/deep 两档原行为。合法角色名在 `graph/setup.py` 的
 `ROLE_KEYS`；`GraphSetup.llm_for(role)` 是取模型的唯一入口。**新增 agent 节点时用
 `self.llm_for("<角色名>")`，别直接引用 `self.quick_thinking_llm`**，否则该角色无法被
-单独配置。
+单独配置。角色项可写通用 `thinking_level`：OpenAI-compatible 映射为
+`reasoning_effort`，Google 映射为 `thinking_level`，Anthropic 映射为 `effort`。
 
 ### 决策绩效统计（v0.5.2 新增）
 `tradingagents performance` 读记忆日志里已结算的决策算指标，零 LLM 调用。

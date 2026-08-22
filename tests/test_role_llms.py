@@ -267,6 +267,122 @@ def test_provider_specific_kwargs_not_leaked_to_other_vendors(monkeypatch):
     assert by_provider["openai"]["reasoning_effort"] == "high", "同一家应保留专属参数"
 
 
+def test_openai_compatible_gets_global_reasoning_and_responses_mode():
+    from tradingagents.graph import trading_graph as tg
+
+    graph = tg.TradingAgentsGraph.__new__(tg.TradingAgentsGraph)
+    graph.config = {
+        "llm_provider": "openai_compatible",
+        "openai_reasoning_effort": "medium",
+        "openai_compatible_use_responses_api": True,
+    }
+
+    assert graph._get_provider_kwargs() == {
+        "reasoning_effort": "medium",
+        "use_responses_api": True,
+    }
+
+
+def test_role_thinking_level_maps_and_inherits_tier_model(monkeypatch):
+    from tradingagents.graph import trading_graph as tg
+
+    created = []
+
+    class FakeClient:
+        def get_llm(self):
+            return FakeLLM("x")
+
+    def fake_create(provider, model, base_url=None, **kwargs):
+        created.append((provider, model, base_url, kwargs))
+        return FakeClient()
+
+    monkeypatch.setattr(tg, "create_llm_client", fake_create)
+    graph = tg.TradingAgentsGraph.__new__(tg.TradingAgentsGraph)
+    graph.config = {
+        "llm_provider": "openai_compatible",
+        "backend_url": "http://192.168.2.221:8080/v1",
+        "quick_think_llm": "gpt-5.6-luna",
+        "deep_think_llm": "gpt-5.6-sol",
+        "role_llms": {
+            "market": {"model": "deepseek-v4-flash", "thinking_level": "low"},
+            "research_manager": {"thinking_level": "high"},
+        },
+    }
+
+    graph._build_role_llms(
+        {"reasoning_effort": "medium", "use_responses_api": True}, False
+    )
+
+    by_model = {model: (url, kwargs) for _, model, url, kwargs in created}
+    assert by_model["deepseek-v4-flash"] == (
+        "http://192.168.2.221:8080/v1",
+        {"reasoning_effort": "low", "use_responses_api": True},
+    )
+    assert by_model["gpt-5.6-sol"] == (
+        "http://192.168.2.221:8080/v1",
+        {"reasoning_effort": "high", "use_responses_api": True},
+    )
+
+
+def test_role_null_thinking_level_removes_global_setting(monkeypatch):
+    from tradingagents.graph import trading_graph as tg
+
+    captured = {}
+
+    class FakeClient:
+        def get_llm(self):
+            return FakeLLM("x")
+
+    def fake_create(provider, model, base_url=None, **kwargs):
+        captured.update(kwargs)
+        return FakeClient()
+
+    monkeypatch.setattr(tg, "create_llm_client", fake_create)
+    graph = tg.TradingAgentsGraph.__new__(tg.TradingAgentsGraph)
+    graph.config = {
+        "llm_provider": "openai_compatible",
+        "quick_think_llm": "gpt-5.6-luna",
+        "deep_think_llm": "gpt-5.6-sol",
+        "role_llms": {"portfolio_manager": {"thinking_level": None}},
+    }
+
+    graph._build_role_llms({"reasoning_effort": "high", "max_tokens": 8000}, False)
+
+    assert "reasoning_effort" not in captured
+    assert captured["max_tokens"] == 8000
+
+
+def test_same_model_with_different_thinking_builds_separate_clients(monkeypatch):
+    from tradingagents.graph import trading_graph as tg
+
+    created = []
+
+    class FakeClient:
+        def get_llm(self):
+            return FakeLLM(len(created))
+
+    def fake_create(provider, model, base_url=None, **kwargs):
+        created.append(kwargs["reasoning_effort"])
+        return FakeClient()
+
+    monkeypatch.setattr(tg, "create_llm_client", fake_create)
+    graph = tg.TradingAgentsGraph.__new__(tg.TradingAgentsGraph)
+    graph.config = {
+        "llm_provider": "openai_compatible",
+        "quick_think_llm": "gpt-5.6-luna",
+        "deep_think_llm": "gpt-5.6-sol",
+        "role_llms": {
+            "bull": {"model": "gpt-5.6-luna", "thinking_level": "low"},
+            "bear": {"model": "gpt-5.6-luna", "thinking_level": "high"},
+        },
+    }
+
+    resolved = graph._build_role_llms({}, False)
+
+    assert created == ["low", "high"]
+    assert resolved["bull"] is not resolved["bear"]
+
+
 def test_unselected_analyst_roles_are_not_instantiated(monkeypatch):
     """没选中的分析师不会进图，就不该为它建模型。
 

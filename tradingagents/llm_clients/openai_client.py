@@ -56,6 +56,22 @@ class NormalizedChatOpenAI(ChatOpenAI):
         return super().with_structured_output(schema, method=method, **kwargs)
 
 
+class OpenAICompatibleChatOpenAI(NormalizedChatOpenAI):
+    """Safer structured-output binding for user-supplied compatible endpoints.
+
+    Gateways vary in whether they accept LangChain's object-form tool_choice.
+    Binding the schema as a tool while omitting the forced choice works with a
+    wider range of Chat Completions and Responses implementations.
+    """
+
+    def with_structured_output(self, schema, *, method=None, **kwargs):
+        capabilities = get_capabilities(self.model_name)
+        resolved_method = method or capabilities.preferred_structured_method
+        if resolved_method == "function_calling":
+            kwargs["tool_choice"] = None
+        return super().with_structured_output(schema, method=method, **kwargs)
+
+
 def _input_to_messages(input_: Any) -> list:
     """Normalise a langchain LLM input to a list of message objects.
 
@@ -136,6 +152,7 @@ class MinimaxChatOpenAI(NormalizedChatOpenAI):
 _PASSTHROUGH_KWARGS = (
     "timeout", "max_retries", "reasoning_effort", "max_tokens",
     "api_key", "callbacks", "http_client", "http_async_client",
+    "use_responses_api",
 )
 
 # Provider base URLs and API key env vars
@@ -232,8 +249,9 @@ class OpenAIClient(BaseLLMClient):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
 
-        # Native OpenAI: use Responses API for consistent behavior across
-        # all model families. Third-party providers use Chat Completions.
+        # Native OpenAI always uses Responses API. Generic compatible endpoints
+        # keep Chat Completions by default for backward compatibility, but may
+        # opt into Responses API through ``use_responses_api``.
         if self.provider == "openai":
             llm_kwargs["use_responses_api"] = True
 
@@ -243,6 +261,17 @@ class OpenAIClient(BaseLLMClient):
             chat_cls = DeepSeekChatOpenAI
         elif self.provider == "minimax":
             chat_cls = MinimaxChatOpenAI
+        elif self.provider == "openai_compatible":
+            capabilities = get_capabilities(self.model)
+            if (
+                capabilities.requires_reasoning_content_roundtrip
+                and not llm_kwargs.get("use_responses_api")
+            ):
+                # A raw DeepSeek Chat Completions relay needs the same
+                # reasoning_content round-trip as DeepSeek's official endpoint.
+                chat_cls = DeepSeekChatOpenAI
+            else:
+                chat_cls = OpenAICompatibleChatOpenAI
         else:
             chat_cls = NormalizedChatOpenAI
         return chat_cls(**llm_kwargs)

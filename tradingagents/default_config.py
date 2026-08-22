@@ -21,6 +21,9 @@ DEFAULT_CONFIG = {
     # provider-specific URL here would leak (e.g. OpenAI's /v1 was previously
     # being forwarded to Gemini, producing malformed request URLs).
     "backend_url": None,
+    # openai_compatible 默认继续走 Chat Completions，兼容既有中继。若自建端点
+    # 实现的是 OpenAI Responses API（/v1/responses），显式开启此项。
+    "openai_compatible_use_responses_api": False,
     # 单次回复的最大输出 token 数。None = 用 provider 自己的默认值。
     # 报告写到一半就断，通常就是撞了这个上限（不是上下文超长）——把它调大即可（#91）。
     # 走 anthropic 通道跑**第三方模型**（Kimi 等）时尤其要注意：langchain-anthropic
@@ -44,7 +47,8 @@ DEFAULT_CONFIG = {
     "role_llms": {},
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
-    "openai_reasoning_effort": None,    # "medium", "high", "low"
+    # 同时适用于 openai 与 openai_compatible；兼容端点是否接受具体等级由服务端决定。
+    "openai_reasoning_effort": None,    # "medium", "high", "low", etc.
     "anthropic_effort": None,           # "high", "medium", "low"
     # ── Claude Agent SDK provider（走个人 Pro/Max 订阅额度，可选依赖 [agentsdk]）──
     # 与内置 anthropic provider 的区别：anthropic 走 ANTHROPIC_API_KEY = **按 token 计费**；
